@@ -1,6 +1,8 @@
+<p align="center"><img src="LifeLock.png" width="220" alt="LifeLock logo"></p>
+
 # LifeLock
 
-App lock for Windows. Pick an installed app and lock it:
+App and game lock for Windows. Pick an installed app or game and lock it:
 
 - **Timed lock**: locked for X hours/minutes starting now.
 - **Daily allowance**: X minutes of use per day, then locked until midnight.
@@ -8,7 +10,26 @@ App lock for Windows. Pick an installed app and lock it:
 
 Allowances and windows can be the same every day, or different for weekdays and weekends.
 
-A locked app is closed the moment it starts, and you see a popup such as "Steam is locked until 18:00".
+### Games
+
+The **Games** tab lists only installed games, wherever they are on the PC. Games are found in two ways:
+
+- **Store records.** The stores below record where they put each game, on any drive:
+
+  | Store | Where the record is |
+  |---|---|
+  | Steam | all Steam libraries |
+  | Epic Games | install manifests |
+  | Ubisoft Connect | registry |
+  | EA app / Origin | registry |
+  | GOG | registry |
+  | Riot | client install list |
+  | Microsoft Store / Xbox app | `XboxGames` folders on each drive |
+- **A scan of every fixed drive.** This finds games by the marker files each store leaves in the game folder (EA, Epic, Battle.net, Ubisoft, GOG, Xbox). It catches games even when the launcher's own records are missing or out of date.
+
+A game is locked **by its folder**: anything started from inside the game folder is blocked, including its launcher exe, helpers and renamed copies. If a game isn't listed, use **Browse for folder…**. The list is cached, and **Rescan** refreshes it. The first scan takes from a few seconds to about a minute.
+
+A locked app or game is closed the moment it starts, and you see a popup such as "Steam is locked until 18:00".
 
 **Lockdown rules.** While an app is locked:
 - its lock can't be removed
@@ -111,9 +132,9 @@ Remove-Item "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\LifeLock.lnk" 
 
 | Piece | Role |
 |---|---|
-| `src/Core` | Rule model and `Rules.LockedUntil`, the single definition of "locked". Also loosening detection, the >16h check (`LongestLock`), the denylist and the JSON store. |
+| `src/Core` | Rule model and `Rules.LockedUntil`, the single definition of "locked". Also loosening detection, the >16h check (`LongestLock`), the app and folder denylists, the JSON store, and `GameScanner` (store detectors plus the drive marker scan). |
 | `src/Service` | Windows service running as SYSTEM. Every second it scans processes and kills locked apps, matched by path and by version info so renamed copies are caught too. It counts allowance usage, owns `C:\ProgramData\LifeLock\rules.json`, and serves the `LifeLock` named pipe. |
-| `src/App` | WinForms UI. It lists Start Menu apps (with a "Browse for .exe" fallback) and edits rules over the pipe. It also handles `--install` and `--uninstall`. |
+| `src/App` | WinForms UI with Apps and Games tabs (plus "Browse for .exe/folder" fallbacks). It edits rules over the pipe. It also handles `--install` and `--uninstall`. |
 | `tests/Check` | `dotnet run --project tests/Check` runs assert checks on the lock logic. |
 
 Tamper resistance:
@@ -123,13 +144,15 @@ Tamper resistance:
 - Changes to the system clock are detected and compensated for.
 - Windows system programs and LifeLock itself can't be locked.
 
-To run without installing (for development): start `publish\LifeLock.Service.exe --console`, then run `publish\LifeLock.exe`.
+To run without installing (for development), set `LIFELOCK_DEV=1` in the shell, then start `publish\LifeLock.Service.exe --console` and `publish\LifeLock.exe`. Dev mode uses its own pipe (`LifeLock-dev`) and data folder (`%TEMP%\LifeLock-dev`), so it never touches an installed copy. To print the games the scanner finds, run `publish\LifeLock.exe --list-games out.txt`.
 
 ## Known limits
 
 This stops impulsive bypassing, not a determined administrator. Safe Mode, taking ownership of the files, or editing the service registry key all get around it. Using a standard (non-admin) Windows account for daily use closes most of that gap.
 
-- Store/UWP apps don't appear in the list. Use "Browse for .exe".
+- Store/UWP *apps* don't appear in the Apps list; use "Browse for .exe". Store/Xbox *games* are listed when they're installed in an `XboxGames` folder. Older UWP games stored under `WindowsApps` aren't listed; use "Browse for folder…".
+- The drive scan goes 4 folders deep. A game nested deeper that no store records is found with "Browse for folder…".
+- Locking a launcher's own folder also blocks the launcher, which is intended.
 - Detection runs every second, so a locked app may flash on screen briefly before it closes.
 
 ---
@@ -152,6 +175,7 @@ DO NOT:
   - create test locks on real apps. Locks can't be removed until they expire.
   - use `sc stop` / `sc delete`; access is denied by design. Uninstall = `"C:\Program Files\LifeLock\LifeLock.exe" --uninstall` (refused while any lock is active).
 STUCK / BROKEN INSTALL: see "Emergency removal (admin)" above; needs reboots, so confirm with the user first.
-DEV TEST WITHOUT INSTALL: publish\LifeLock.Service.exe --console, then publish\LifeLock.exe (pipe name: LifeLock).
+GAMES: auto-detected (store records + marker scan of all fixed drives); locked by folder. Debug: publish\LifeLock.exe --list-games out.txt
+DEV TEST WITHOUT INSTALL: set LIFELOCK_DEV=1, then publish\LifeLock.Service.exe --console and publish\LifeLock.exe (pipe LifeLock-dev, data %TEMP%\LifeLock-dev; safe alongside an installed copy).
 STATE: C:\ProgramData\LifeLock\rules.json (SYSTEM-only), log at C:\ProgramData\LifeLock\log.txt.
 ```

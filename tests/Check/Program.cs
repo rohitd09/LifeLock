@@ -64,4 +64,38 @@ Eq(TimeSpan.FromDays(5), Rules.LongestLock(allDay), "0-min weekday allowance = 5
 Eq(true, Rules.DenyReason(@"C:\Windows\explorer.exe") != null, "explorer denied");
 Eq(true, Rules.DenyReason(@"C:\Windows\System32\notepad.exe") != null, "System32 denied");
 
+// ---------- Games: folder rules ----------
+var tmp = Directory.CreateTempSubdirectory("lifelock-check-").FullName;
+Eq(true, Rules.DenyFolderReason(Path.GetPathRoot(tmp)!) != null, "drive root denied");
+Eq(true, Rules.DenyFolderReason(Environment.GetFolderPath(Environment.SpecialFolder.System)) != null, "System32 folder denied");
+Eq(true, Rules.DenyFolderReason(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)) != null, "Program Files root denied");
+Eq(null, Rules.DenyFolderReason(tmp), "ordinary game folder allowed");
+var fr = new Rule { Mode = Mode.Duration, Folder = @"D:\Games\A", LockUntilUtc = dur.LockUntilUtc };
+Eq(true, Rules.IsLoosening(fr, new Rule { Mode = Mode.Duration, Folder = @"D:\Games\B", LockUntilUtc = dur.LockUntilUtc.AddHours(1) }), "changing game folder is loosening");
+
+// ---------- Games: parsers (synthetic fixtures) ----------
+var gr = new List<byte>("RGBX"u8.ToArray());
+gr.AddRange(BitConverter.GetBytes(2));
+gr.AddRange(System.Text.Encoding.Unicode.GetBytes("XboxGames\0Games\\XBOX\0"));
+Eq("XboxGames|Games\\XBOX", string.Join("|", GameScanner.ParseGamingRoot([.. gr])), ".GamingRoot parsed");
+Eq(0, GameScanner.ParseGamingRoot("junk"u8.ToArray()).Count, "bad .GamingRoot ignored");
+var vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"E:\\\\SteamLibrary\"\n\t}\n}";
+Eq(@"C:\Program Files (x86)\Steam|E:\SteamLibrary", string.Join("|", GameScanner.SteamLibraries(vdf)), "Steam libraries parsed");
+Eq(("Some Game", "SomeGame"), GameScanner.SteamManifest("\"AppState\"\n{\n\t\"appid\"\t\t\"1\"\n\t\"name\"\t\t\"Some Game\"\n\t\"installdir\"\t\t\"SomeGame\"\n}"), "Steam manifest parsed");
+Eq("Cool Game", GameScanner.XboxName("<Game><ShellVisuals DefaultDisplayName=\"Cool Game\" /></Game>"), "Xbox name parsed");
+Eq(null, GameScanner.XboxName("<ShellVisuals DefaultDisplayName=\"ms-resource:Title\" />"), "Xbox ms-resource name ignored");
+
+// ---------- Games: marker scan (synthetic tree) ----------
+void Make(string rel) { var p = Path.Combine(tmp, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllText(p, ""); }
+Make(@"EA\Jedi\__Installer\installerdata.xml");                  // depth 2
+Directory.CreateDirectory(Path.Combine(tmp, @"a\Epic\Fort\.egstore")); // depth 3
+Make(@"a\b\c\GogGame\goggame-123.info");                          // depth 4
+Make(@"x\Xbox\Halo\Content\MicrosoftGame.config");                // depth 3
+Make(@"a\b\c\d\TooDeep\.build.info");                             // depth 5 -> ignored
+Make(@"node_modules\Hidden\uplay_install.state");                 // skipped dir
+Make(@"EA\Jedi\Extras\.build.info");                              // inside a game -> not separate
+var hits = GameScanner.MarkerScan(tmp, GameScanner.ScanDepth).Select(g => $"{g.Store}:{g.Name}").OrderBy(s => s).ToList();
+Eq("EA:Jedi|Epic:Fort|GOG:GogGame|Microsoft Store:Halo", string.Join("|", hits), "marker scan finds depth 1-4, skips deeper/node_modules/nested");
+Directory.Delete(tmp, true);
+
 Console.WriteLine("All checks passed.");

@@ -21,6 +21,7 @@ sealed class RuleForm : Form
     {
         original = r;
         Text = $"Lock {r.DisplayName}";
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         Font = new Font("Segoe UI", 9.5f);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
@@ -40,7 +41,7 @@ sealed class RuleForm : Form
         CancelButton = cancel;
 
         var body = Column(
-            new Label { Text = r.ExePath, AutoSize = true, ForeColor = SystemColors.GrayText },
+            new Label { Text = r.Folder != null ? $"Game folder: {r.Folder}" : r.ExePath, AutoSize = true, ForeColor = SystemColors.GrayText },
             modes, durationRow, daysRow, row1, row2);
         if (lockedUntil != null)
             body.Controls.Add(new Label { Text = $"🔒 On lockdown until {lockedUntil:ddd HH:mm} — you can only make it stricter.", AutoSize = true, ForeColor = Color.Firebrick });
@@ -82,7 +83,7 @@ sealed class RuleForm : Form
     bool Build()
     {
         var m = SelectedMode;
-        var r = new Rule { Id = original.Id, ExePath = original.ExePath, DisplayName = original.DisplayName, Mode = m, Split = splitDays.Checked };
+        var r = new Rule { Id = original.Id, ExePath = original.ExePath, Folder = original.Folder, DisplayName = original.DisplayName, Mode = m, Split = splitDays.Checked };
         if (m == Mode.Duration)
         {
             r.DurationMinutes = (int)hours.Value * 60 + (int)minutes.Value;

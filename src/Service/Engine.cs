@@ -96,6 +96,7 @@ sealed class Engine(bool isService, Action stop)
 
     bool Matches(Rule r, string path)
     {
+        if (r.Folder != null) return path.StartsWith(r.Folder + "\\", StringComparison.OrdinalIgnoreCase);
         if (string.Equals(path, r.ExePath, StringComparison.OrdinalIgnoreCase)) return true;
         if (r.Key == null) return false;
         if (!keyCache.TryGetValue(path, out var key)) keyCache[path] = key = Rules.Identity(path);
@@ -204,9 +205,18 @@ sealed class Engine(bool isService, Action stop)
 
     Response Upsert(Rule n, DateTime now)
     {
-        if (Rules.DenyReason(n.ExePath) is { } deny) return Fail(deny);
-        n.ExePath = Path.GetFullPath(n.ExePath);
-        n.Key = Rules.Identity(n.ExePath);
+        if (n.Folder != null)
+        {
+            if (Rules.DenyFolderReason(n.Folder) is { } denyDir) return Fail(denyDir);
+            n.Folder = Path.GetFullPath(n.Folder).TrimEnd('\\');
+            n.Key = null;
+        }
+        else
+        {
+            if (Rules.DenyReason(n.ExePath) is { } deny) return Fail(deny);
+            n.ExePath = Path.GetFullPath(n.ExePath);
+            n.Key = Rules.Identity(n.ExePath);
+        }
         var i = state.Rules.FindIndex(x => x.Id == n.Id);
         var old = i >= 0 ? state.Rules[i] : null;
 

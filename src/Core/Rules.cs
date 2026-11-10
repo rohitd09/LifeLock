@@ -21,6 +21,8 @@ public class Rule
     public string DisplayName { get; set; } = "";
     /// <summary>OriginalFilename|ProductName|CompanyName — catches renamed/copied exes.</summary>
     public string? Key { get; set; }
+    /// <summary>Game lock: any process started from inside this folder is blocked. ExePath is then only used for the icon.</summary>
+    public string? Folder { get; set; }
     public Mode Mode { get; set; }
     /// <summary>false = same plan every day (Weekday and Weekend hold the same values).</summary>
     public bool Split { get; set; }
@@ -89,7 +91,9 @@ public static class Rules
     /// <summary>True if <paramref name="n"/> would make the lock weaker than <paramref name="o"/> in any way.</summary>
     public static bool IsLoosening(Rule o, Rule n)
     {
-        if (o.Mode != n.Mode || !string.Equals(o.ExePath, n.ExePath, StringComparison.OrdinalIgnoreCase)) return true;
+        if (o.Mode != n.Mode
+            || !string.Equals(o.ExePath, n.ExePath, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(o.Folder, n.Folder, StringComparison.OrdinalIgnoreCase)) return true;
         return o.Mode switch
         {
             Mode.Duration => n.LockUntilUtc < o.LockUntilUtc,
@@ -131,6 +135,25 @@ public static class Rules
         return null;
     }
 
+    /// <summary>Why this folder may not be locked as a game folder, or null if it may.</summary>
+    public static string? DenyFolderReason(string dir)
+    {
+        string full;
+        try { full = Path.GetFullPath(dir).TrimEnd('\\'); } catch { return "Invalid folder."; }
+        if (Path.GetPathRoot(full)?.TrimEnd('\\') == full) return "A whole drive can't be locked.";
+        var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\');
+        if (full.Equals(win, StringComparison.OrdinalIgnoreCase) || full.StartsWith(win + "\\", StringComparison.OrdinalIgnoreCase))
+            return "Windows folders can't be locked.";
+        foreach (var sf in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86,
+                                   Environment.SpecialFolder.CommonApplicationData, Environment.SpecialFolder.UserProfile })
+            if (full.Equals(Environment.GetFolderPath(sf).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                return "This folder is too broad to lock. Pick the game's own folder.";
+        if (!Directory.Exists(full)) return "Folder not found.";
+        if (File.Exists(Path.Combine(full, "LifeLock.exe")) || File.Exists(Path.Combine(full, "LifeLock.Service.exe")))
+            return "LifeLock's own folder can't be locked.";
+        return null;
+    }
+
     public static string? Identity(string path)
     {
         try
@@ -152,8 +175,12 @@ public class State
 
 public static class Store
 {
-    public static readonly string Dir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "LifeLock");
+    /// <summary>LIFELOCK_DEV=1 gives a dev/test engine its own pipe and data folder, so it never touches an installed copy.</summary>
+    public static readonly bool Dev = Environment.GetEnvironmentVariable("LIFELOCK_DEV") == "1";
+
+    public static readonly string Dir = Dev
+        ? Path.Combine(Path.GetTempPath(), "LifeLock-dev")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "LifeLock");
     static string FilePath => Path.Combine(Dir, "rules.json");
 
     public static State Load()
@@ -195,7 +222,7 @@ public class Response
 
 public static class Pipe
 {
-    public const string Name = "LifeLock";
+    public static readonly string Name = Store.Dev ? "LifeLock-dev" : "LifeLock";
 
     public static Response Send(Request q)
     {

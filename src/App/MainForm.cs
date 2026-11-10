@@ -6,21 +6,28 @@ record AppEntry(string Name, string Path);
 
 sealed class MainForm : Form
 {
-    readonly TextBox search = new() { PlaceholderText = "Search apps…", Dock = DockStyle.Top };
+    readonly TextBox search = new() { PlaceholderText = "Search apps and games…", Dock = DockStyle.Top };
     readonly ListView apps = new() { View = View.Details, FullRowSelect = true, MultiSelect = false, Dock = DockStyle.Fill, HeaderStyle = ColumnHeaderStyle.None };
     readonly ListView locks = new() { View = View.Details, FullRowSelect = true, MultiSelect = false, Dock = DockStyle.Fill };
     readonly ImageList icons = new() { ImageSize = new Size(20, 20), ColorDepth = ColorDepth.Depth32Bit };
     readonly Label status = new() { Dock = DockStyle.Bottom, Height = 24, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) };
     readonly Button addBtn = new() { Text = "Lock selected app…", AutoSize = true };
     readonly Button browseBtn = new() { Text = "Browse for .exe…", AutoSize = true };
+    readonly ListView games = new() { View = View.Details, FullRowSelect = true, MultiSelect = false, Dock = DockStyle.Fill };
+    readonly Label gameStatus = new() { Dock = DockStyle.Bottom, Height = 22, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SystemColors.GrayText };
+    readonly Button lockGameBtn = new() { Text = "Lock selected game…", AutoSize = true };
+    readonly Button browseFolderBtn = new() { Text = "Browse for folder…", AutoSize = true };
+    readonly Button rescanBtn = new() { Text = "Rescan", AutoSize = true };
     readonly Button editBtn = new() { Text = "Edit…", AutoSize = true };
     readonly Button removeBtn = new() { Text = "Remove", AutoSize = true };
     List<AppEntry> all = [];
+    List<GameEntry> allGames = [];
     List<RuleView> views = [];
 
     public MainForm()
     {
         Text = "LifeLock";
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         Font = new Font("Segoe UI", 9.5f);
         Size = new Size(1100, 640);
         StartPosition = FormStartPosition.CenterScreen;
@@ -31,14 +38,27 @@ sealed class MainForm : Form
         locks.Columns.Add("Lock", 270);
         locks.Columns.Add("Status", 300);
         locks.SmallImageList = icons;
+        games.Columns.Add("Game", 190);
+        games.Columns.Add("Store", 110);
+        games.Columns.Add("Folder", 320);
+        games.SmallImageList = icons;
+        games.ShowItemToolTips = locks.ShowItemToolTips = true;
+
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        tabs.TabPages.Add(Page("Apps", apps, Buttons(addBtn, browseBtn)));
+        tabs.TabPages.Add(Page("Games", games, Buttons(lockGameBtn, browseFolderBtn, rescanBtn), gameStatus));
 
         var split = new SplitContainer { Dock = DockStyle.Fill };
-        split.Panel1.Controls.Add(Group("1. Pick an app", apps, search, Buttons(addBtn, browseBtn)));
+        split.Panel1.Controls.Add(Group("1. Pick an app or game", tabs, search, null));
         split.Panel2.Controls.Add(Group("2. Locks", locks, null, Buttons(editBtn, removeBtn)));
         Controls.Add(split);
         Controls.Add(status);
 
-        search.TextChanged += (_, _) => FillApps();
+        search.TextChanged += (_, _) => { FillApps(); FillGames(); };
+        games.DoubleClick += (_, _) => LockSelectedGame();
+        lockGameBtn.Click += (_, _) => LockSelectedGame();
+        browseFolderBtn.Click += (_, _) => BrowseFolder();
+        rescanBtn.Click += async (_, _) => await ScanGames();
         apps.DoubleClick += (_, _) => AddSelected();
         addBtn.Click += (_, _) => AddSelected();
         browseBtn.Click += (_, _) => Browse();
@@ -58,16 +78,27 @@ sealed class MainForm : Form
             all = await Task.Run(ScanApps);
             FillApps();
             await RefreshLocks();
+            allGames = GameScanner.LoadCache();
+            FillGames();
+            await ScanGames();
         };
     }
 
-    static Control Group(string title, Control fill, Control? top, Control bottom)
+    static Control Group(string title, Control fill, Control? top, Control? bottom)
     {
         var g = new GroupBox { Text = title, Dock = DockStyle.Fill, Padding = new Padding(8) };
         g.Controls.Add(fill);
         if (top != null) g.Controls.Add(top);
-        g.Controls.Add(bottom);
+        if (bottom != null) g.Controls.Add(bottom);
         return g;
+    }
+
+    static TabPage Page(string title, Control fill, params Control[] bottom)
+    {
+        var p = new TabPage(title) { Padding = new Padding(4) };
+        p.Controls.Add(fill);
+        p.Controls.AddRange(bottom);
+        return p;
     }
 
     static Control Buttons(params Button[] bs)
@@ -133,7 +164,7 @@ sealed class MainForm : Form
         locks.Items.Clear();
         foreach (var v in views)
         {
-            var item = new ListViewItem(v.Rule.DisplayName, IconKey(v.Rule.ExePath)) { Tag = v, ToolTipText = v.Rule.ExePath };
+            var item = new ListViewItem(v.Rule.DisplayName, IconKey(v.Rule.ExePath)) { Tag = v, ToolTipText = v.Rule.Folder ?? v.Rule.ExePath };
             item.SubItems.Add(Describe(v.Rule));
             item.SubItems.Add(Status(v));
             if (v.LockedUntil != null) item.ForeColor = Color.Firebrick;
@@ -187,6 +218,49 @@ sealed class MainForm : Form
         if (d.ShowDialog(this) != DialogResult.OK) return;
         if (Rules.DenyReason(d.FileName) is { } why) { MessageBox.Show(this, why, "LifeLock"); return; }
         Edit(new Rule { ExePath = d.FileName, DisplayName = Path.GetFileNameWithoutExtension(d.FileName), Mode = Mode.Duration }, null);
+    }
+
+    async Task ScanGames()
+    {
+        rescanBtn.Enabled = false;
+        gameStatus.Text = "Scanning stores and drives for games…";
+        var found = await Task.Run(GameScanner.Scan);
+        GameScanner.SaveCache(found);
+        allGames = found;
+        FillGames();
+        rescanBtn.Enabled = true;
+    }
+
+    void FillGames()
+    {
+        games.BeginUpdate();
+        games.Items.Clear();
+        foreach (var g in allGames.Where(g => g.Name.Contains(search.Text, StringComparison.OrdinalIgnoreCase)
+                                           || g.Store.Contains(search.Text, StringComparison.OrdinalIgnoreCase)))
+        {
+            var item = new ListViewItem(g.Name, g.Exe == null ? "" : IconKey(g.Exe)) { Tag = g, ToolTipText = g.Folder };
+            item.SubItems.Add(g.Store);
+            item.SubItems.Add(g.Folder);
+            games.Items.Add(item);
+        }
+        games.EndUpdate();
+        gameStatus.Text = $"{allGames.Count} games found. Not listed? Use Browse for folder.";
+    }
+
+    void LockSelectedGame()
+    {
+        if (games.SelectedItems.Count == 0) { status.Text = "Select a game first."; return; }
+        var g = (GameEntry)games.SelectedItems[0].Tag!;
+        Edit(new Rule { Folder = g.Folder, ExePath = g.Exe ?? "", DisplayName = g.Name, Mode = Mode.Duration }, null);
+    }
+
+    void BrowseFolder()
+    {
+        using var d = new FolderBrowserDialog { Description = "Choose the game's install folder", UseDescriptionForTitle = true };
+        if (d.ShowDialog(this) != DialogResult.OK) return;
+        if (Rules.DenyFolderReason(d.SelectedPath) is { } why) { MessageBox.Show(this, why, "LifeLock"); return; }
+        var name = Path.GetFileName(d.SelectedPath.TrimEnd(Path.DirectorySeparatorChar));
+        Edit(new Rule { Folder = d.SelectedPath, DisplayName = name, Mode = Mode.Duration }, null);
     }
 
     void EditSelected()
