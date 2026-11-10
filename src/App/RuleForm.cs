@@ -93,6 +93,19 @@ sealed class RuleForm : Form
             r.Weekday = row1.Plan(m);
             r.Weekend = splitDays.Checked ? row2.Plan(m) : r.Weekday;
             if (r.Weekday == null && r.Weekend == null) return Warn("Tick at least one row to restrict.");
+            if (m == Mode.Window && new[] { r.Weekday, r.Weekend }.Any(p => p != null && p.Start == p.End))
+                return Warn("Start and end time are the same. Pick different times.");
+        }
+        var longest = Rules.LongestLock(r);
+        if (longest > TimeSpan.FromHours(16))
+        {
+            var how = longest >= TimeSpan.FromDays(7) ? "with no break at all — it never unlocks"
+                : $"for up to {(longest.Days > 0 ? $"{longest.Days} day(s) " : "")}{longest.Hours}h {longest.Minutes}m in a row";
+            var answer = MessageBox.Show(this,
+                $"This will lock {original.DisplayName} {how}.\n\n" +
+                "While it's locked you can't remove the lock, loosen it, or uninstall LifeLock.\n\nLock anyway?",
+                "Long lock", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes) return false;
         }
         Result = r;
         return true;

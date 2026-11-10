@@ -68,6 +68,24 @@ public static class Rules
         }
     }
 
+    /// <summary>
+    /// Longest unbroken lock this rule can produce, including windows that chain across days.
+    /// Allowance usage isn't known in advance, so only 0-minute allowances (all-day locks) count.
+    /// </summary>
+    public static TimeSpan LongestLock(Rule r)
+    {
+        if (r.Mode == Mode.Duration) return TimeSpan.FromMinutes(r.DurationMinutes);
+        var probe = new Rule { Mode = r.Mode, Weekday = r.Weekday, Weekend = r.Weekend }; // no usage recorded
+        var t = new DateTime(2026, 1, 5); // a Monday; simulate two weeks minute by minute
+        int run = 0, best = 0;
+        for (int i = 0; i < 14 * 1440; i++, t = t.AddMinutes(1))
+        {
+            run = LockedUntil(probe, t) != null ? run + 1 : 0;
+            best = Math.Max(best, run);
+        }
+        return TimeSpan.FromMinutes(best);
+    }
+
     /// <summary>True if <paramref name="n"/> would make the lock weaker than <paramref name="o"/> in any way.</summary>
     public static bool IsLoosening(Rule o, Rule n)
     {

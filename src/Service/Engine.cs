@@ -215,6 +215,8 @@ sealed class Engine(bool isService, Action stop)
         n.DurationMinutes = 0;
         if (n.Mode == Mode.Duration && n.LockUntilUtc <= EffUtc) return Fail("Pick a lock duration.");
         if (n.Mode != Mode.Duration && n.Weekday == null && n.Weekend == null) return Fail("Pick at least one restricted day type.");
+        if (n.Mode == Mode.Window && new[] { n.Weekday, n.Weekend }.Any(p => p != null && p.Start == p.End))
+            return Fail("Start and end time are the same. Pick different times.");
 
         if (old != null)
         {

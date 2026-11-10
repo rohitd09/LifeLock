@@ -51,6 +51,15 @@ Eq(false, Rules.IsLoosening(dur, new Rule { Mode = Mode.Duration, LockUntilUtc =
 var more = new Rule { Mode = Mode.Allowance, Weekday = new Plan { AllowanceMinutes = 31 }, Weekend = new Plan { AllowanceMinutes = 30 } };
 Eq(true, Rules.IsLoosening(allow, more), "more allowance is loosening");
 
+// Longest consecutive lock (drives the >16h warning).
+Eq(TimeSpan.FromHours(8), Rules.LongestLock(W(22, 6)), "22-06 weekday window = 8h");
+var chained = new Rule { Mode = Mode.Window, Split = true,
+    Weekday = new Plan { Start = new(7, 0), End = new(7, 0) }, Weekend = new Plan { Start = new(18, 0), End = new(22, 0) } };
+Eq(TimeSpan.FromDays(5), Rules.LongestLock(chained), "weekday 07-07 chains Mon 07:00 -> Sat 07:00");
+Eq(TimeSpan.FromHours(17), Rules.LongestLock(new Rule { Mode = Mode.Duration, DurationMinutes = 17 * 60 }), "17h duration");
+var allDay = new Rule { Mode = Mode.Allowance, Weekday = new Plan { AllowanceMinutes = 0 }, Weekend = new Plan { AllowanceMinutes = 30 } };
+Eq(TimeSpan.FromDays(5), Rules.LongestLock(allDay), "0-min weekday allowance = 5 days");
+
 // Denylist.
 Eq(true, Rules.DenyReason(@"C:\Windows\explorer.exe") != null, "explorer denied");
 Eq(true, Rules.DenyReason(@"C:\Windows\System32\notepad.exe") != null, "System32 denied");
